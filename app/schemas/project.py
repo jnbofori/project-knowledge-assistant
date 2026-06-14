@@ -17,6 +17,7 @@ class ProjectResponse(BaseModel):
     description: str | None
     created_by: uuid.UUID
     created_at: datetime
+    current_user_role: ProjectRole
 
     model_config = {"from_attributes": True}
 

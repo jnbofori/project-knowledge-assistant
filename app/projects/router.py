@@ -19,12 +19,23 @@ from app.schemas.project import (
 router = APIRouter(prefix="/projects", tags=["projects"])
 
 
+def _to_project_response(project: Project, membership: ProjectMember) -> ProjectResponse:
+    return ProjectResponse(
+        id=project.id,
+        name=project.name,
+        description=project.description,
+        created_by=project.created_by,
+        created_at=project.created_at,
+        current_user_role=membership.role,
+    )
+
+
 @router.post("", response_model=ProjectResponse, status_code=status.HTTP_201_CREATED)
 def create_project(
     payload: ProjectCreate,
     current_user: Annotated[User, Depends(get_current_user)],
     db: Annotated[Session, Depends(get_db)],
-) -> Project:
+) -> ProjectResponse:
     project = Project(name=payload.name, description=payload.description, created_by=current_user.id)
     db.add(project)
     db.flush()
@@ -33,29 +44,56 @@ def create_project(
     db.add(membership)
     db.commit()
     db.refresh(project)
-    return project
+    db.refresh(membership)
+    return _to_project_response(project, membership)
 
 
 @router.get("", response_model=list[ProjectResponse])
 def list_projects(
     current_user: Annotated[User, Depends(get_current_user)],
     db: Annotated[Session, Depends(get_db)],
-) -> list[Project]:
-    return (
-        db.query(Project)
+) -> list[ProjectResponse]:
+    rows = (
+        db.query(Project, ProjectMember)
         .join(ProjectMember, ProjectMember.project_id == Project.id)
         .filter(ProjectMember.user_id == current_user.id)
         .order_by(Project.created_at.desc())
         .all()
     )
+    return [_to_project_response(project, membership) for project, membership in rows]
 
 
 @router.get("/{project_id}", response_model=ProjectResponse)
 def get_project(
     project_membership: Annotated[tuple[Project, ProjectMember], Depends(require_project_member())],
-) -> Project:
+) -> ProjectResponse:
+    project, membership = project_membership
+    return _to_project_response(project, membership)
+
+
+@router.get("/{project_id}/members", response_model=list[ProjectMemberResponse])
+def list_members(
+    project_membership: Annotated[tuple[Project, ProjectMember], Depends(require_project_member())],
+    db: Annotated[Session, Depends(get_db)],
+) -> list[ProjectMemberResponse]:
     project, _ = project_membership
-    return project
+    members = (
+        db.query(ProjectMember, User)
+        .join(User, User.id == ProjectMember.user_id)
+        .filter(ProjectMember.project_id == project.id)
+        .order_by(ProjectMember.created_at.asc())
+        .all()
+    )
+    return [
+        ProjectMemberResponse(
+            id=member.id,
+            user_id=member.user_id,
+            email=user.email,
+            role=member.role,
+            created_at=member.created_at,
+        )
+        for member, user in members
+    ]
 
 
 @router.post("/{project_id}/members", response_model=ProjectMemberResponse, status_code=status.HTTP_201_CREATED)
